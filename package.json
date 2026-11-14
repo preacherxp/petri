@@ -1,0 +1,21 @@
+{
+  "name": "petri",
+  "version": "0.3.0",
+  "private": true,
+  "description": "A lab that grows organisms from Claude Code sessions and breeds agent personalities (petris).",
+  "type": "module",
+  "bin": { "petri": "src/cli.ts" },
+  "scripts": {
+    "build": "bun build src/render/app.ts --target=browser --format=iife --outfile=dist/app.js",
+    "typecheck": "tsc --noEmit",
+    "petri": "bun src/cli.ts",
+    "test": "bun run build && bun run typecheck && bun test",
+    "test:corpus": "PETRI_CORPUS=1 bun test tests/corpus.test.ts",
+    "test:fuzz": "PETRI_FUZZ=5000 bun test tests/invariants.test.ts",
+    "prepare": "bun run build"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}
