@@ -215,7 +215,7 @@ function showNode(n: GrowNode) {
   if (!ev) { showLegend(); return; }
   const rows: string[] = [];
   const row = (k: string, v: unknown, cls = '') => { if (v !== undefined && v !== null && v !== '') rows.push(`<div class="row"><span>${k}</span><b class="${cls}">${esc(v)}</b></div>`); };
-  row('kind', n.k === 'bud' ? 'subagent work' : ev.k + (ev.tool ? ' · ' + ev.tool : ''));
+  row('kind', n.k === 'bud' ? 'subagent work' : ev.k + (ev.tool ? ' · ' + ev.tool : '') + (ev.as ? ` (as ${ev.as})` : ''));
   row('what', ev.s);
   row('at', fmtT(ev.t));
   if (ev.tool) {
@@ -320,7 +320,8 @@ window.addEventListener('keydown', e => {
 });
 
 const hp = new URLSearchParams(location.hash.slice(1)); // #run=12&end deep-links a run, fully grown
-if (hp.has('run')) S.idx = clamp(Number(hp.get('run')) - 1, 0, DATA.runs.length - 1);
+const want = Number(hp.get('run') || NaN);
+if (hp.has('run') && Number.isInteger(want)) S.idx = clamp(want - 1, 0, DATA.runs.length - 1); // a bad number keeps the latest run
 fit();
 buildLineage();
 select(S.idx, !hp.has('end'));

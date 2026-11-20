@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>petri</title>
+<style>
+:root{--bg:#04060d;--panel:#070b15;--line:rgba(160,190,230,.08);--fg:#c6d2e3;--dim:#5b6b82;--cyan:#3ee6ff;--red:#ff3d5a}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--fg);font:12px/1.5 ui-monospace,Menlo,SFMono-Regular,Consolas,monospace;overflow:hidden}
+#app{display:grid;grid-template-columns:1fr 330px;grid-template-rows:1fr 118px;height:100%}
+#stage{position:relative;overflow:hidden;cursor:crosshair;background:radial-gradient(ellipse at 50% 55%,#070c19 0%,var(--bg) 70%)}
+#dish{position:absolute;inset:0;display:block}
+#hud{position:absolute;left:20px;top:16px;pointer-events:none}
+#hud h1{font-size:13px;letter-spacing:.4em;font-weight:600;color:#eef6ff;text-shadow:0 0 18px rgba(62,230,255,.45)}
+#hud .sub{color:var(--dim);margin-top:5px;letter-spacing:.04em}
+#hud .title{color:#93a7c3;margin-top:7px;max-width:58vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#empty{position:absolute;inset:0;display:none;place-items:center;color:var(--dim);pointer-events:none;text-align:center}
+#bar{position:absolute;left:20px;right:20px;bottom:16px;display:flex;align-items:center;gap:14px;color:var(--dim)}
+#play{all:unset;cursor:pointer;color:#dbe8f7;width:18px;text-align:center;font-size:13px}
+#play:hover{color:var(--cyan)}
+#track{flex:1;position:relative;height:18px;cursor:pointer}
+#track .rail{position:absolute;left:0;right:0;top:8px;height:2px;background:rgba(160,190,230,.14)}
+#track .fill{position:absolute;left:0;top:8px;height:2px;background:var(--cyan);box-shadow:0 0 8px rgba(62,230,255,.7)}
+#track .tick{position:absolute;top:4px;width:1px;height:10px;background:rgba(255,255,255,.5)}
+#track .tick.molt{background:var(--red);width:2px;top:2px;height:14px;box-shadow:0 0 6px var(--red)}
+#track .knob{position:absolute;top:5px;width:8px;height:8px;border-radius:50%;background:#fff;margin-left:-4px;box-shadow:0 0 10px rgba(62,230,255,.9)}
+#clock{min-width:62px;text-align:right;color:#9fb3cc}
+#energy{display:flex;align-items:center;gap:8px;min-width:150px}
+#energy .meter{width:80px;height:5px;background:rgba(160,190,230,.12);border-radius:2px;overflow:hidden}
+#energy .meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3ee6ff,#a86bff)}
+#energy b{font-weight:500;color:#9fb3cc;min-width:44px}
+#panel{background:var(--panel);border-left:1px solid var(--line);padding:18px 18px 10px;overflow-y:auto;display:flex;flex-direction:column;gap:16px}
+#panel h2{font-size:10px;letter-spacing:.3em;color:var(--dim);font-weight:500;margin-bottom:7px}
+.fit{display:flex;align-items:baseline;gap:12px}
+.fit .n{font-size:46px;line-height:1;font-weight:600;letter-spacing:-.02em}
+.fit .l{color:var(--dim);letter-spacing:.3em;font-size:10px}
+.fit .best{margin-left:auto;font-size:10px;letter-spacing:.2em;color:#ffd27a;border:1px solid rgba(255,210,122,.5);padding:2px 6px;border-radius:3px;text-shadow:0 0 10px rgba(255,210,122,.6)}
+.fitbar{height:3px;background:rgba(160,190,230,.1);margin-top:10px;border-radius:2px;overflow:hidden}
+.fitbar i{display:block;height:100%}
+.dmgrate{color:var(--dim);margin-top:6px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 14px}
+.grid div{display:flex;justify-content:space-between;gap:8px}
+.grid span{color:var(--dim)}
+.grid b{font-weight:500;color:#dbe8f7}
+.led{display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px dashed rgba(160,190,230,.08)}
+.led span{color:var(--dim)}
+.led b{color:var(--red);font-weight:500}
+.pills{display:flex;flex-wrap:wrap;gap:5px}
+.pill{border:1px solid;border-radius:3px;padding:1px 7px;font-size:11px;opacity:.9}
+.pill.bad{color:#ff8ea0;border-color:rgba(255,61,90,.55)}
+.pill.good{color:#9ff0ff;border-color:rgba(62,230,255,.5)}
+.hints{list-style:none;display:flex;flex-direction:column;gap:7px}
+.hints li{padding-left:14px;position:relative;color:#b9c7d9;overflow-wrap:anywhere}
+.hints li:before{content:"◆";position:absolute;left:0;top:0;color:#a86bff;font-size:9px;line-height:18px}
+.hints code{color:#dbe8f7;background:rgba(255,255,255,.05);padding:0 3px;border-radius:2px}
+#spec{margin-top:auto;min-height:150px;border-top:1px solid var(--line);padding-top:12px}
+#spec .row{display:flex;gap:10px;line-height:1.45}
+#spec .row span{color:var(--dim);min-width:52px;flex:none}
+#spec .row b{font-weight:500;color:#dbe8f7;word-break:break-all}
+#spec .err{color:#ff8ea0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;color:var(--dim)}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:-1px;box-shadow:0 0 8px currentColor;background:currentColor}
+.dimtxt{color:var(--dim)}
+#lineage{grid-column:1/-1;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 20px;overflow-x:auto;overflow-y:hidden}
+#lineage h2{font-size:10px;letter-spacing:.3em;color:var(--dim);font-weight:500;flex:none;margin-right:6px;writing-mode:vertical-rl;transform:rotate(180deg)}
+.thumb{flex:none;width:64px;cursor:pointer;opacity:.6;transition:opacity .15s;text-align:center}
+.thumb:hover{opacity:.9}
+.thumb.cur{opacity:1}
+.thumb canvas{display:block;width:64px;height:64px;border-radius:50%;background:radial-gradient(circle at 50% 45%,rgba(20,40,70,.45),rgba(4,6,13,0) 70%);border:1px solid rgba(160,190,230,.08)}
+.thumb.cur canvas{border-color:rgba(62,230,255,.6);box-shadow:0 0 16px rgba(62,230,255,.25)}
+.thumb .f{font-size:11px;margin-top:4px;line-height:1}
+.thumb .d{font-size:9px;color:var(--dim);line-height:1.3}
+::-webkit-scrollbar{height:6px;width:6px}::-webkit-scrollbar-thumb{background:rgba(160,190,230,.15);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="dish"></canvas>
+    <div id="hud"><h1>PETRI</h1><div class="sub" id="sub"></div><div class="title" id="title"></div></div>
+    <div id="empty"></div>
+    <div id="bar">
+      <button id="play" title="space">❚❚</button>
+      <div id="track"><div class="rail"></div><div class="ticks"></div><div class="fill"></div><div class="knob"></div></div>
+      <div id="clock">0:00</div>
+      <div id="energy"><span>context</span><div class="meter"><i></i></div><b>0</b></div>
+    </div>
+  </div>
+  <aside id="panel"></aside>
+  <div id="lineage"><h2>LINEAGE</h2></div>
+</div>
+<script>window.PETRI_DATA = /*__DATA__*/null;</script>
+<script>/*__APP__*/</script>
+</body>
+</html>

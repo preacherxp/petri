@@ -26,7 +26,7 @@ options:
   --report      text report only (for agents)
   --json        JSON to stdout
   --runs N      embed full events for the N most recent runs (default 40)
-  -o, --out     where to write the dish (default: dish.html next to the project)
+  -o, --out     where to write the dish (default: dish.html in the petri directory)
   --no-open     don't open the dish in a browser`;
 
 export function main(argv: string[]): number {
@@ -73,10 +73,6 @@ export function main(argv: string[]): number {
       return 1;
     }
     throw e;
-  }
-  if (!runs.length) {
-    process.stderr.write('no runs found\n');
-    return 1;
   }
   const scope = a.all ? 'all projects' : runs[runs.length - 1]!.project!;
   const lin = lineage(runs);

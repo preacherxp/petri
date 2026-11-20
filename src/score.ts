@@ -1,4 +1,4 @@
-import { DMG, EDIT_TOOLS, FAT, WEB_TOOLS } from './classify.ts';
+import { baseTool, DMG, EDIT_TOOLS, FAT, WEB_TOOLS } from './classify.ts';
 import type { Kind, LedgerLine, PetriEvent, Run, ScoredRun, Stats, Tokens } from './types.ts';
 import { cut, pyFloat, pyRound } from './util.ts';
 
@@ -8,8 +8,8 @@ const has = (e: PetriEvent, f: string) => (e.flags ?? []).includes(f as never);
 export function stats(evs: PetriEvent[], tok: Tokens, peakCtx: number, thrash: number): Stats {
   const calls = tools(evs);
   const turns = new Set(calls.map(e => e.g)).size;
-  const reads = calls.filter(e => e.tool === 'Read');
-  const edits = calls.filter(e => EDIT_TOOLS.has(e.tool!));
+  const reads = calls.filter(e => baseTool(e) === 'Read');
+  const edits = calls.filter(e => EDIT_TOOLS.has(baseTool(e)!));
   const byKind: Partial<Record<Kind, number>> = {};
   for (const e of calls) byKind[e.k as Kind] = (byKind[e.k as Kind] ?? 0) + 1;
   return {
@@ -22,8 +22,8 @@ export function stats(evs: PetriEvent[], tok: Tokens, peakCtx: number, thrash: n
     retries: calls.filter(e => has(e, 'retry')).length,
     thrash,
     compactions: evs.filter(e => e.k === 'molt').length,
-    agents: calls.filter(e => e.tool === 'Agent').length,
-    web: calls.filter(e => WEB_TOOLS.has(e.tool!)).length,
+    agents: calls.filter(e => baseTool(e) === 'Agent').length,
+    web: calls.filter(e => WEB_TOOLS.has(baseTool(e)!)).length,
     reads: reads.length,
     edits: edits.length,
     edit_errors: edits.filter(e => e.err).length,

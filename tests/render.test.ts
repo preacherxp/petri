@@ -61,6 +61,13 @@ describe.skipIf(!CHROME)('dish in headless Chrome', () => {
     assert.ok(dom.includes('RUN 1 / 3'));
     assert.ok(dom.includes('task 0'));
   }, 60_000);
+  it('a malformed deep link falls back to the latest run', () => {
+    for (const frag of ['#run=abc&end', '#run=&end', '#run=1.5&end']) {
+      const { dom, log } = render(frag);
+      assert.doesNotMatch(log, /Uncaught|TypeError/, frag);
+      assert.ok(dom.includes('RUN 3 / 3'), frag);
+    }
+  }, 120_000);
   it('marks prompts and the molt on the timeline', () => {
     const { dom } = render();
     assert.equal(dom.split('class="tick molt"').length - 1, 1);

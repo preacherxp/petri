@@ -28,12 +28,40 @@ describe('prompts', () => {
     const t = new Transcript();
     for (const text of ['<command-name>/model</command-name>', '<local-command-stdout>ok</local-command-stdout>',
       '<local-command-caveat>x</local-command-caveat>', '<system-reminder>x</system-reminder>',
-      '<agent-message from="a">x</agent-message>', '[Request interrupted by user]', '   ', '']) t.prompt(text);
+      '<agent-message from="a">x</agent-message>', '[Request interrupted by user]', '   ', '',
+      '<command-message>review</command-message>\n<command-name>/review</command-name>', '<bash-input>ls</bash-input>',
+      '<bash-stdout>a b</bash-stdout><bash-stderr></bash-stderr>', '<local-command-stderr>x</local-command-stderr>',
+      '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>']) t.prompt(text);
     t.prompt('real', { isMeta: true });
+    t.prompt('queued by the harness', { origin: { kind: 'task-notification' } });
     t.prompt(null);
     const r = t.run();
     assert.equal(r.stats.prompts, 0);
     assert.equal(r.title, '');
+  });
+  it('a line made only of harness wrapper tags is not a prompt', () => {
+    const t = new Transcript();
+    for (const text of ['<system-update>\nNew skills are available.\n</system-update>', '<conversation-checkpoint>history</conversation-checkpoint>',
+      '<shell id="sh_1" state="completed" command="ls">a b</shell>', '<subagent sessionID="s1" state="completed">done</subagent>',
+      '<image id="i1"/>', '<a>x</a>\n<b k="v">y</b>']) t.prompt(text);
+    const r = t.run();
+    assert.equal(r.stats.prompts, 0);
+    assert.equal(r.title, '');
+  });
+  it('text typed after a harness wrapper is the prompt and the title', () => {
+    const t = new Transcript();
+    t.prompt('<system-reminder>The user opened a file.</system-reminder>\n\nfix the login bug');
+    t.prompt([{ type: 'text', text: '<skill_content name="s">\n# Skill\n</skill_content>' }, { type: 'text', text: 'use it on the header' }]);
+    const r = t.run();
+    assert.deepEqual(r.events.map(e => e.s), ['fix the login bug', 'use it on the header']);
+    assert.equal(r.title, 'fix the login bug');
+  });
+  it('a prompt that only mentions a tag is kept whole', () => {
+    const r = new Transcript().prompt('<div> breaks the layout, see </span>').prompt('why is <b>x</b> bold').run();
+    assert.deepEqual(r.events.map(e => e.s), ['<div> breaks the layout, see </span>', 'why is <b>x</b> bold']);
+  });
+  it('a prompt the person typed, marked human, counts', () => {
+    assert.equal(new Transcript().prompt('go', { origin: { kind: 'human' } }).run().stats.prompts, 1);
   });
   it('title is the first prompt', () => {
     const r = new Transcript().prompt('first').prompt('second').run();
@@ -171,6 +199,18 @@ describe('turns', () => {
     const es = tools(t.run());
     assert.deepEqual(es.map(e => e.g), [0, 1]);
     assert.deepEqual(es.map(e => e.par), [0, 0]);
+  });
+  it('a message split by its first result stays one parallel turn', () => {
+    // Real transcripts: the result of the first call can land between the tool_use lines of one message.
+    const t = new Transcript().prompt('q');
+    t.assistant([{ type: 'text', text: 'Reading both.' }, { type: 'tool_use', id: 'toolu_a', name: 'Read', input: { file_path: '/w/a' } }], { mid: 'msg_split' });
+    t.results([['toolu_a', 'ok', false]]);
+    t.assistant([{ type: 'tool_use', id: 'toolu_b', name: 'Read', input: { file_path: '/w/b' } }], { mid: 'msg_split' });
+    t.results([['toolu_b', 'ok', false]]);
+    const r = t.run();
+    assert.deepEqual(kinds(r), ['prompt', 'sense', 'sense']);
+    assert.deepEqual(tools(r).map(e => [e.g, e.par]), [[0, 0], [0, 1]]);
+    assert.deepEqual([r.stats.turns, r.tokens.out], [1, 100]);
   });
   it('talk does not open a turn', () => {
     const t = new Transcript().prompt('q');

@@ -1,12 +1,16 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { DMG, EDIT_TOOLS, FAT, kindOf, resultSize, summarize, textOf, ts } from './classify.ts';
+import { baseTool, classifyCall, DMG, EDIT_TOOLS, FAT, resultSize, stripWrappers, summarize, textOf, ts } from './classify.ts';
 import { iterJson } from './jsonl.ts';
 import { stats } from './score.ts';
 import type { Flag, PetriEvent, Run, SubStats, Tokens } from './types.ts';
 import { collapse, cut, isRecord, pyRound, stableStringify } from './util.ts';
 
-const SKIP_PROMPT = ['<command-name>', '<local-command-stdout>', '<local-command-caveat>', '<system-reminder>', '<agent-message', '[Request interrupted'];
+/**
+ * User lines Claude Code writes on its own that are not wrapped in one closed tag: an unclosed agent message, an interruption.
+ * Lines made only of tag blocks (slash commands, ! shell mode, task notices, reminders) are dropped by stripWrappers.
+ */
+const SKIP_PROMPT = ['<agent-message', '[Request interrupted'];
 
 type Json = Record<string, unknown>;
 
@@ -70,7 +74,9 @@ export function parseRun(path: string): Run {
     if (d.isSidechain) continue;
     const typ = d.type;
     const m: Json | null = isRecord(d.message) ? d.message : null;
-    if (cur && !(typ === 'assistant' && m && m.id === (cur as { id: unknown }).id)) flush();
+    // One message can be split by the result of its first call, so a results-only user line does not end it.
+    const sameMsg = typ === 'assistant' && m && m.id === (cur as { id: unknown } | null)?.id;
+    if (cur && !sameMsg && !isResultsOnly(d)) flush();
     const t = d.timestamp ? ts(d.timestamp) : null;
     if (t) {
       t0 ||= t;
@@ -104,7 +110,7 @@ export function parseRun(path: string): Run {
             ev.e = cut(collapse(textOf(b.content ?? '')), 160);
           }
           const tur = d.toolUseResult;
-          if (ev.tool === 'Agent' && isRecord(tur) && typeof tur.agentId === 'string' && ev.id) toolOfAgent.set(tur.agentId, ev.id);
+          if (baseTool(ev) === 'Agent' && isRecord(tur) && typeof tur.agentId === 'string' && ev.id) toolOfAgent.set(tur.agentId, ev.id);
           const flags = (ev.flags ??= []);
           if (ev.res > FAT) {
             flags.push('fat');
@@ -124,8 +130,8 @@ export function parseRun(path: string): Run {
         }
         continue;
       }
-      if (d.isMeta) continue;
-      const text = collapse(textOf(content));
+      if (d.isMeta || (isRecord(d.origin) && typeof d.origin.kind === 'string' && d.origin.kind !== 'human')) continue;
+      const text = stripWrappers(collapse(textOf(content)));
       if (!text || SKIP_PROMPT.some(p => text.startsWith(p))) continue;
       evs.push({ k: 'prompt', t: rel, s: cut(text, 120) });
       continue;
@@ -157,15 +163,16 @@ export function parseRun(path: string): Run {
     for (const b of blocks) if (isRecord(b) && b.type === 'text' && typeof b.text === 'string' && b.text.trim()) c.texts.push(b.text);
     for (const b of uses) {
       const tool = typeof b.name === 'string' && b.name ? b.name : '?';
-      const inp = isRecord(b.input) ? b.input : {};
+      const call = classifyCall(tool, isRecord(b.input) ? b.input : {});
+      const inp = call.input, base = call.as ?? tool;
       if (!toolMsgs.has(mid)) {
         toolMsgs.set(mid, toolMsgs.size);
         [prevTurn, thisTurn] = [thisTurn, []];
       }
       const g = toolMsgs.get(mid)!;
       const ev: Pending = {
-        k: kindOf(tool, inp), tool, s: summarize(tool, b.input ?? {}, run.cwd), t: rel, g,
-        par: [...pending.values()].some(p => p.g === g) ? 1 : 0,
+        k: call.kind, tool, ...(call.as ? { as: call.as } : {}), s: summarize(base, isRecord(b.input) ? inp : b.input ?? {}, run.cwd), t: rel, g,
+        par: thisTurn.length ? 1 : 0,
         out: c.out, ctx: c.ctx, id: typeof b.id === 'string' ? b.id : undefined, res: 0,
       };
       c.out = c.ctx = 0; // the message's usage lands on its first tool call
@@ -176,14 +183,15 @@ export function parseRun(path: string): Run {
         ev.d = (ev.d ?? 0) + DMG.retry;
       }
       const fp = typeof inp.file_path === 'string' && inp.file_path ? inp.file_path : null;
-      if (tool === 'Read' && fp) {
-        const key = stableStringify([fp, inp.offset ?? null, inp.limit ?? null]);
+      if (base === 'Read' && fp) {
+        const { file_path: _, ...range } = inp; // offset/limit, or a harness's own range fields
+        const key = stableStringify([fp, range]);
         if (seenVer.has(key) && seenVer.get(key) === (readVer.get(fp) ?? 0)) {
           flags.push('reread');
           ev.d = (ev.d ?? 0) + DMG.reread;
         }
         seenVer.set(key, readVer.get(fp) ?? 0);
-      } else if (EDIT_TOOLS.has(tool) && fp) {
+      } else if (EDIT_TOOLS.has(base) && fp) {
         readVer.set(fp, (readVer.get(fp) ?? 0) + 1);
       }
       if (flags.length) ev.flags = flags;
@@ -199,7 +207,7 @@ export function parseRun(path: string): Run {
   for (const ev of evs) {
     delete ev.sig;
     delete ev.id;
-    if (ev.tool === 'Agent' && !ev.sub) ev.sub = { calls: 0, errors: 0, out: 0 };
+    if (baseTool(ev) === 'Agent' && !ev.sub) ev.sub = { calls: 0, errors: 0, out: 0 };
   }
 
   run.started = t0;
@@ -214,7 +222,7 @@ export function parseRun(path: string): Run {
 function attachSubagents(path: string, evs: Pending[], toolOfAgent: Map<string, string>): void {
   const subdir = join(dirname(path), basename(path, extname(path)), 'subagents');
   if (!existsSync(subdir) || !statSync(subdir).isDirectory()) return;
-  const byId = new Map(evs.filter(e => e.tool === 'Agent' && e.id).map(e => [e.id!, e]));
+  const byId = new Map(evs.filter(e => baseTool(e) === 'Agent' && e.id).map(e => [e.id!, e]));
   const files = readdirSync(subdir).filter(f => f.startsWith('agent-') && f.endsWith('.jsonl')).sort();
   for (const f of files) {
     const stem = f.slice(0, -'.jsonl'.length);
@@ -232,6 +240,11 @@ function attachSubagents(path: string, evs: Pending[], toolOfAgent: Map<string, 
     const ev = tid ? byId.get(tid) : undefined;
     if (ev) ev.sub = subStats(join(subdir, f));
   }
+}
+
+function isResultsOnly(d: Json): boolean {
+  const c = isRecord(d.message) ? d.message.content : null;
+  return d.type === 'user' && Array.isArray(c) && c.length > 0 && c.every(b => isRecord(b) && b.type === 'tool_result');
 }
 
 function n0(v: unknown): number {

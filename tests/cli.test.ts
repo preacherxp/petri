@@ -65,6 +65,18 @@ describe('collect', () => {
   it('no project throws NoTranscripts', () => {
     assert.throws(() => collect('/petri-nonexistent/nothing', false, root), (e: unknown) => e instanceof NoTranscripts && /no transcripts/.test(e.message));
   });
+  it('a missing .jsonl is an error, not the nearest project', () => {
+    session('s1', 1000).write(join(root, '-petri-nonexistent-proj'));
+    assert.throws(() => collect('/petri-nonexistent/proj/typo.jsonl', false, root), (e: unknown) => e instanceof NoTranscripts && /no such transcript/.test(e.message));
+  });
+  it('a project whose sessions are all empty says so', () => {
+    const d = join(root, '-x-proj');
+    new Transcript({ sid: 'noise' }).raw({ type: 'file-history-snapshot', snapshot: {} }).write(d);
+    assert.throws(() => collect(d, false, root), (e: unknown) => e instanceof NoTranscripts && e.message === `1 transcript in ${d}, but none has a prompt or a tool call (try --all)`);
+  });
+  it('--all with no projects directory', () => {
+    assert.throws(() => collect(undefined, true, join(root, 'missing')), (e: unknown) => e instanceof NoTranscripts && /no transcripts under/.test(e.message));
+  });
   it('all projects', () => {
     session('a', 1000).write(join(root, '-p1'));
     session('b', 2000).write(join(root, '-p2'));
@@ -131,10 +143,27 @@ describe('cli', () => {
     assert.equal(p.status, 1);
     assert.ok(p.stderr.includes('no transcripts'));
   });
+  it('a fresh machine without ~/.claude/projects exits 1 with a reason', () => {
+    const fresh = tmpdir();
+    for (const args of [['--all', '--report'], ['--report'], ['--no-open']]) {
+      const env: NodeJS.ProcessEnv = { ...process.env, HOME: fresh };
+      delete env.PETRI_PROJECTS;
+      const p = spawnSync(process.execPath, [join(ROOT, 'src', 'cli.ts'), ...args], { env, encoding: 'utf8', timeout: 60_000, cwd: fresh });
+      assert.equal(p.status, 1, args.join(' '));
+      assert.match(p.stderr, /no transcripts/, args.join(' '));
+      assert.doesNotMatch(p.stderr, /\n\s+at /, 'no stack trace');
+    }
+  });
   it('bad arguments exit 2', () => {
     assert.equal(cli(['--runs', 'many'], false).status, 2);
     assert.equal(cli(['--bogus'], false).status, 2);
     assert.equal(cli(['a', 'b'], false).status, 2);
+  });
+  it('the demo grows a lineage from synthetic sessions', () => {
+    const p = spawnSync(process.execPath, [join(ROOT, 'scripts', 'demo.ts'), '--report'], { encoding: 'utf8', timeout: 60_000 });
+    assert.equal(p.status, 0, p.stderr);
+    assert.ok(p.stdout.startsWith('PETRI · -demo-shop-api · 10 runs'), p.stdout);
+    assert.ok(p.stdout.includes('mutations for next run:') || p.stdout.includes('NEW BEST'), p.stdout);
   });
   it('--help', () => assert.ok(cli(['--help']).stdout.includes('--report')));
 });

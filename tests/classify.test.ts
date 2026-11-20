@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'bun:test';
-import { bashKind, kindOf, resultSize, shortPath, summarize, textOf, ts } from '../src/classify.ts';
+import { bashKind, kindOf, resultSize, shortPath, stripWrappers, summarize, textOf, ts } from '../src/classify.ts';
 import { iterJson } from '../src/jsonl.ts';
 import { fmtK, fmtTime } from '../src/report.ts';
 import { collapse, cut, pyFixed, pyJson, pyLen, pyRound, stableStringify } from '../src/util.ts';
@@ -90,6 +90,21 @@ describe('summarize', () => {
   });
   it('unknown input prints as JSON', () => assert.equal(summarize('mcp__x__y', { a: 1, b: 'ż' }, '/w'), '{"a": 1, "b": "\\u017c"}'));
   it('non-object input prints as text', () => assert.equal(summarize('X', 'plain', '/w'), 'plain'));
+});
+
+describe('stripWrappers', () => {
+  it('removes complete leading tag blocks only', () => {
+    assert.equal(stripWrappers('<x>a</x>'), '');
+    assert.equal(stripWrappers('  <x a="1">a</x> <y/> rest <z>k</z>'), 'rest <z>k</z>');
+    assert.equal(stripWrappers('<x>never closed'), '<x>never closed');
+    assert.equal(stripWrappers('a < b > c'), 'a < b > c');
+    assert.equal(stripWrappers('<x>a</y> tail'), '<x>a</y> tail');
+  });
+  it('stays fast on a long unclosed line', () => {
+    const t0 = performance.now();
+    stripWrappers('<a>' + '<b '.repeat(50_000));
+    assert.ok(performance.now() - t0 < 200);
+  });
 });
 
 describe('text and size', () => {

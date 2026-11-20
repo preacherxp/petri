@@ -23,6 +23,7 @@ export function bundleIsStale(): boolean {
  */
 export function renderDish(data: DishData): string {
   if (!existsSync(APP_BUNDLE)) throw new MissingBundle(`renderer not built: run "bun run build" in ${ROOT}`);
+  if (!existsSync(TEMPLATE)) throw new MissingBundle(`dish template missing: ${TEMPLATE} (restore it with git checkout)`);
   const payload = JSON.stringify(data).replaceAll('</', '<\\/');
   const app = readFileSync(APP_BUNDLE, 'utf8').replace(/<\/script/gi, '<\\/script');
   return readFileSync(TEMPLATE, 'utf8')

@@ -54,16 +54,22 @@ export function slugFor(cwd: string, root = projectsDir()): string | null {
  * target: a .jsonl file, a project transcript directory, or a working directory (default: cwd).
  */
 export function collect(target: string | undefined, all: boolean, root = projectsDir()): ScoredRun[] {
-  let files: string[];
+  let files: string[], where: string;
   if (all) {
     files = (isDir(root) ? readdirSync(root) : []).flatMap(d => jsonlIn(join(root, d)));
+    where = root;
+    if (!files.length) throw new NoTranscripts(`no transcripts under ${root} (Claude Code writes them there; PETRI_PROJECTS points elsewhere)`);
   } else if (target && existsSync(target) && statSync(target).isFile()) {
     files = [target];
+    where = target;
+  } else if (target?.endsWith('.jsonl')) {
+    throw new NoTranscripts(`no such transcript: ${target}`);
   } else {
     const d = target || process.cwd();
     const proj = jsonlIn(d).length ? d : slugFor(d, root);
     if (!proj) throw new NoTranscripts(`no transcripts for ${d} under ${root} (try --all or pass a .jsonl)`);
     files = jsonlIn(proj);
+    where = proj;
   }
   const runs: ScoredRun[] = [];
   for (const f of files.sort(byParts)) {
@@ -72,5 +78,6 @@ export function collect(target: string | undefined, all: boolean, root = project
     r.project = basename(dirname(f));
     runs.push(score(r));
   }
+  if (!runs.length) throw new NoTranscripts(`${files.length} transcript${files.length === 1 ? '' : 's'} in ${where}, but none has a prompt or a tool call (try --all)`);
   return runs.sort((a, b) => (a.started ?? 0) - (b.started ?? 0));
 }

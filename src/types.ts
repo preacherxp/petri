@@ -18,9 +18,11 @@ export interface PetriEvent {
   /** One-line summary: prompt text, command, file, or answer. */
   s?: string;
   tool?: string;
+  /** The built-in tool an MCP tool acts as, such as Read for mcp__fs__read_file. */
+  as?: string;
   /** Turn index: calls from one assistant message share it. */
   g?: number;
-  /** 1 when issued in the same turn as an earlier, still-pending call. */
+  /** 1 when an earlier call came from the same assistant message. */
   par?: number;
   /** Output tokens of the message, on its first block only. */
   out?: number;

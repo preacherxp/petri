@@ -1,6 +1,6 @@
 node_modules/
 dist/
-dish.html
+/dish.html
 .DS_Store
 .env
 .env.*

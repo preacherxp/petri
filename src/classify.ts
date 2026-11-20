@@ -38,6 +38,90 @@ export function kindOf(tool: string, input: Record<string, unknown>): Kind {
   return tool === 'Bash' ? bashKind(String(input.command ?? '')) : 'meta';
 }
 
+/**
+ * MCP tools (mcp__<server>__<tool>) by the built-in tool they act like, matched on the part after the server.
+ * Names are compared lowercased without "_" and "-", so read_file, readFile and read-file are one entry.
+ * To support another harness, add its tool names to the right line. Anything not listed stays meta,
+ * unless its input has the shape of an edit, a shell command or a search (see byShape).
+ */
+const MCP_NAMES: Readonly<Record<string, readonly string[]>> = {
+  Read: ['read', 'read_file', 'read_text_file', 'read_multiple_files'],
+  Grep: ['grep', 'search_files', 'search_code', 'ripgrep'],
+  Glob: ['glob', 'find_files', 'list_files', 'list_directory', 'directory_tree', 'ls'],
+  Edit: ['edit', 'edit_file', 'str_replace', 'edit_block', 'replace'],
+  MultiEdit: ['multi_edit', 'multiedit'],
+  Write: ['write', 'write_file', 'create_file'],
+  Bash: ['shell', 'bash', 'execute', 'exec', 'execute_command', 'run_command', 'run_shell_command', 'terminal'],
+  WebFetch: ['webfetch', 'web_fetch', 'fetch', 'fetch_url'],
+  WebSearch: ['websearch', 'web_search', 'search_web'],
+  Agent: ['subagent', 'task', 'agent', 'spawn_agent'],
+  AskUserQuestion: ['question', 'ask', 'ask_user', 'ask_user_question'],
+};
+const squash = (s: string) => s.toLowerCase().replace(/[-_]/g, '');
+const MCP_TOOL = new Map(Object.entries(MCP_NAMES).flatMap(([as, names]) => names.map(n => [squash(n), as] as const)));
+
+/** Input field spellings that mean the same thing, mapped to the built-in tool's name for it. */
+const FILE_KEYS = ['file_path', 'path', 'filePath', 'filepath', 'file', 'notebook_path'];
+const ALIASES: Readonly<Record<string, readonly string[]>> = {
+  old_string: ['oldString', 'old_str', 'old_text', 'oldText'],
+  new_string: ['newString', 'new_str', 'new_text', 'newText'],
+  replace_all: ['replaceAll'],
+  command: ['cmd'],
+};
+const FILE_TOOLS: ReadonlySet<string> = new Set(['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+const str = (i: Record<string, unknown>, k: string) => typeof i[k] === 'string' && i[k] !== '';
+
+/** The built-in a tool looks like from its input alone: an edit, a shell command or a search. */
+function byShape(i: Record<string, unknown>): string | undefined {
+  if (FILE_KEYS.some(k => str(i, k)) && ['old_string', ...ALIASES.old_string!].some(k => str(i, k))) return 'Edit';
+  if (['command', ...ALIASES.command!].some(k => str(i, k))) return 'Bash';
+  if (str(i, 'pattern')) return 'Grep';
+  return undefined;
+}
+
+/** The input renamed to the built-in's field names, so every check reads one spelling. */
+function asBuiltInInput(as: string, input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...input };
+  for (const [name, alts] of Object.entries(ALIASES)) {
+    for (const a of alts) {
+      if (a in out) {
+        out[name] ??= out[a];
+        delete out[a];
+      }
+    }
+  }
+  if (FILE_TOOLS.has(as) && !str(out, 'file_path')) {
+    const k = FILE_KEYS.find(k => str(out, k));
+    if (k) {
+      out.file_path = out[k];
+      delete out[k];
+    }
+  }
+  return out;
+}
+
+export interface Call {
+  kind: Kind;
+  /** The built-in tool an MCP tool acts as; unset for built-ins and unrecognised tools. */
+  as?: string;
+  /** The input with the built-in's field names. */
+  input: Record<string, unknown>;
+}
+
+/** What a tool call does. Built-ins by name; MCP tools by MCP_NAMES, then by the shape of their input. */
+export function classifyCall(tool: string, input: Record<string, unknown>): Call {
+  const m = /^mcp__(.+?)__(.+)$/.exec(tool);
+  if (!m) return { kind: kindOf(tool, input), input };
+  const as = MCP_TOOL.get(squash(m[2]!)) ?? byShape(input);
+  if (!as) return { kind: 'meta', input };
+  const inp = asBuiltInInput(as, input);
+  if (as === 'Bash' && !str(inp, 'command')) return { kind: 'run', input: inp }; // runs code, not a shell line
+  return { kind: kindOf(as, inp), as, input: inp };
+}
+
+/** The built-in name an event's checks use: its MCP mapping, or the tool itself. */
+export const baseTool = (e: { tool?: string; as?: string }): string | undefined => e.as ?? e.tool;
+
 export function shortPath(p: string, cwd: string | null | undefined): string {
   if (cwd) {
     const root = cwd.replace(/\/+$/, '');
@@ -68,6 +152,27 @@ export function textOf(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.filter(b => isRecord(b) && b.type === 'text').map(b => String((b as Record<string, unknown>).text ?? '')).join('\n');
+}
+
+const OPEN_TAG = /\s*<([A-Za-z][\w:.-]*)(?:\s[^<>]*?)?(\/?)>/y;
+
+/**
+ * A user line without the XML-like blocks a harness puts in front of it (<system-reminder>…</system-reminder>,
+ * <shell id="…">…</shell>, <skill_content>…</skill_content>). Only complete blocks at the very start go, so a
+ * prompt that is nothing but such blocks becomes empty, and text the person typed after them is kept.
+ */
+export function stripWrappers(text: string): string {
+  let i = 0;
+  for (;;) {
+    OPEN_TAG.lastIndex = i;
+    const m = OPEN_TAG.exec(text);
+    if (!m) break;
+    if (m[2]) { i = OPEN_TAG.lastIndex; continue; }
+    const close = text.indexOf(`</${m[1]}>`, OPEN_TAG.lastIndex);
+    if (close < 0) break; // an unclosed tag is text, not a wrapper
+    i = close + m[1]!.length + 3;
+  }
+  return text.slice(i).trim();
 }
 
 /** Size of a tool result in characters (code points). Non-text blocks count as zero. */

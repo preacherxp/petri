@@ -76,7 +76,7 @@ export function checkInvariants(r: ScoredRun): void {
   for (const e of r.events) {
     assert.ok(KINDS.has(e.k), e.k);
     assert.ok(!('sig' in e) && !('id' in e));
-    if (e.tool === 'Agent') assert.ok(e.sub);
+    if ((e.as ?? e.tool) === 'Agent') assert.ok(e.sub);
     if (e.err) assert.ok(typeof e.e === 'string');
   }
   JSON.stringify(r);
